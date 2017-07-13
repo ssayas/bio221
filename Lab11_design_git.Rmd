@@ -1,0 +1,261 @@
+---
+title: 'Lab 11: Experimental Design and git'
+author: "Bios221"
+date: "2017-07-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Goal
+
+In this lab we will see an example of how to use experimental design in a clever way, 
+and how to use packages `pwr` and `RNASeqPower` for power analyses to design your own experiments. 
+Also, we will use git and GitHub as a way to keep track of your code. 
+This will hopefully be useful for you in your future data analysis projects.
+
+# Setup Git and GitHub
+
+1. Sign up for an account: https://github.com/
+2. Install GitHub client: https://desktop.github.com/
+3. (Optional) Request student discount: https://education.github.com/pack
+3. Create new private repository:
+    * Go to: https://github.com/YourUserName
+    * Select `Repositories` tab
+    * Click `New` button
+    * Select `Public` (or `Private`)  and `Initialize this repository with a README`
+    * Edit `README.md`
+    * Write and save `README.md`:
+    
+    ```
+    # Hello World
+
+    This is my first git repository.
+    ```
+    
+5. Clone your repository
+    * Click `Clone or download` green button, then `Open in Desktop`
+    * Click `Clone` button to make a local copy of your repository
+6. Move today's `Rmd` file in cloned folder
+7. Synchronize your local copy with the one on GitHub
+    * Click `1 Uncommitted Change`
+    * Write in summary text field:
+    
+    ```
+    This is my first commit
+    ``` 
+    
+    * Click `Commit and Sync master`
+8. Continue with the labs, when you are done `Commit and Sync master` to save everything you have done on GitHub
+
+# Packages
+
+Install packages.
+
+```{r warning=FALSE, message=FALSE}
+pkgs_needed = c("survey","ggplot2","tibble","pwr","RNASeqPower")
+letsinstall = setdiff(pkgs_needed, installed.packages()) 
+if (length(letsinstall) > 0) {
+  source("http://bioconductor.org/biocLite.R")
+  biocLite(letsinstall)
+}
+```
+
+Load packages.
+
+```{r warning=FALSE, message=FALSE}
+library("survey")
+library("ggplot2")
+library("tibble")
+library("pwr")
+library("RNASeqPower")
+```
+
+# Fisher's Experiment
+
+RA Fisher, one of the fathers of experimental design said: "To consult the statistician after an experiment is finished is often merely to ask him to conduct a post mortem examination. He can perhaps say what the experiment died of." (Presidential Address to the First Indian Statistical Congress, 1938. Sankhya 4, 14-17).
+
+Experimental design aims to maximize the available resources, capitilizing on cancellations and symmetry are important aspects. Here is a historical illustration of how Hotelling devised an improved weighing scheme.
+
+We are given a set of eight unknown  weights
+$\theta=(\theta_1,\theta_2,\theta_3,\theta_4,\theta_5,\theta_6,\theta_7,\theta_8)$;
+here we create a true $\theta$  at random.
+
+```{r prepareH,echo=FALSE}
+set.seed(86658811)
+```
+
+```{r HotellingsExpt}
+theta=round((sample(8,8)*2+rnorm(8)),1)
+theta
+```
+
+## Naive method
+
+ Suppose we use a chemical scale that weighs each
+$\theta_i$ individually with errors distributed normally
+with a sd of 0.1.
+We compute
+the vector of errors `errors1` and their variance  as follows:
+
+```{r SimpleWeighing}
+X1to8=theta+rnorm(8,0,0.1)
+X1to8
+errors1=X1to8-theta
+errors1
+var(errors1)
+```
+
+## Hotelling’s method
+
+```{r HotellingsMethod}
+library("survey")
+h8 = hadamard(6)
+coef8 = 2*h8-1
+coef8
+```
+
+We  use `coef8` as the coefficients in a new weighing scheme:
+
+* The first column puts all the theta on one side of the balance and weighs them
+* The second says we place (1,3,5,7) on one side of the balance and (2,4,6,8) on the other and evaluate the difference
+* Etc.
+
+So we observe this:
+
+```{r}
+Y = theta  %*% coef8 + rnorm(8,0,0.1)
+```
+
+An estimator $\widehat{\theta}$ for $\theta$ is 
+
+```{r}
+thetahat = Y %*% t(coef8)/8
+```
+
+Here we took advantage of the fact taht `coef8` is a orthogonal matrix, and that the inverse of an orthogonal matrix is its transpose.
+
+Now, because in this case we know the true theta's we can compute the errors
+and their variance:
+
+```{r Hoterrors}
+errors2 = as.vector(thetahat - theta)
+errors2
+var(errors2)
+```
+
+We see that this variance is almost an order of magnitude smaller than that of the first procedure. Were we just lucky? To find out, let's repeat both schemes 10,000 times and look at the sampling distributions of the variances of the errors.
+
+```{r bootstrapHotelling}
+B = 10000
+errors1 = matrix(0, nrow = B, ncol = 8)
+errors2 = matrix(0, nrow = B, ncol = 8)
+tcoef8 = t(coef8)/8
+for (i in (1:B)){
+  theta = round((1:8)*2 + rnorm(8),1)
+  X1to8o = theta+rnorm(8,0,0.1)
+  errors1[i,] = X1to8o - theta
+  Y = coef8 %*% theta + rnorm(8,0,0.1)
+  thetahat = tcoef8 %*% Y
+  errors2[i,] = thetahat-theta
+}
+mean_errors1 = mean(apply(errors1,1,var))
+mean_errors1
+mean_errors2 = mean(apply(errors2,1,var))
+mean_errors2
+mean_errors1/mean_errors2
+```
+
+**Question**: Can you plot the error ratio distribution? Hint: Take `log10` of the ratios.
+
+Answer:
+
+```{r plot_error_ratio}
+library("ggplot2")
+library("tibble")
+# TODO
+```
+
+The reason we have a smaller variance using the second method is that the objects are weighed several times instead of once. We say that the second scheme is more `efficient` than the first by a factor of 8 because the errors generated by the measurement have a variance which is 8 times lower. This example shows us that when several quantities are to be ascertained there is an opportunity to increase the accuracy and reduce the cost by combining measurements in one experiment and making comparisons between similar groups.
+
+# Power Analysis
+
+## Simple Experiments
+
+The package `pwr` provides functions for doing the standard power
+calculations. There are always four quantities involved in these
+computations: sample size, effect size, significance level (false positive rate)
+and the power itself which is the probability of rejecting a hypothesis
+when you should (true positive rate).
+The functions `pwr.2p.test`, `pwr.chisq.test`, and `pwr.f2.test`
+provide the calculations for tests of two proportions, the chisquared test
+and general linear tests respectively.
+
+Here is an example of the power calculcation for a two sample t-test with $n=15$.
+The functions requires several arguments:
+
+```
+pwr.t.test(n = NULL, d = NULL, sig.level = 0.05, power = NULL,
+    type = c("two.sample", "one.sample", "paired"),
+    alternative = c("two.sided", "less", "greater"))
+```
+
+If you enter a value for the power and the effect size, it will return
+the sample size needed, or if you enter the sample size and effect size
+it returns the power:
+
+```{r}
+library("pwr")
+pwr.t.test(n=15,d=0.4,sig.level=0.05,type="two.sample")
+pwr.t.test(n=15,d=0.4,sig.level=0.05,type="paired")
+```
+
+If we want to know what sample size would be required
+to detect a given effect size:
+
+```{r}
+library("pwr")
+pwr.t.test(d=0.4,sig.level=0.05,type="two.sample",power=0.8)
+pwr.t.test(d=0.4,sig.level=0.05,type="paired",power=0.8)
+```
+
+We see that we would need twice as many observations for the same
+power when not pairing the experiment.
+
+Some power calculations need more than the sample
+and effect size, they alse need the relative size of the 
+standard deviation to the mean, called the coefficient of
+variation $cv=\sigma/\mu$.
+
+## RNASeq Experiments
+
+For highthroughput studies such RNA-seq the package
+`RNASeqPower` has the same type of input.
+However, there are more important quantities
+to take into account:
+
+- The depth of sequencing and consequent expected count for a given transcript, argument depth
+- The coefficient of variation of counts within each of the two groups, argument cv
+- The relative expression that we wish to detect $\Delta$, argument effect
+- The target false positive rate $\alpha$ and false negative rate $\beta$ or power $= 1-\beta$, arguments alpha and power
+- The number of samples n in each group, argument n
+
+We often do not know some of the true values for our input
+so we do our calculations at many tentative values, creating
+an abaque or grid of possible values within the limits
+that we think will cover our experiment:
+
+```{r}
+library("RNASeqPower")
+rnapower(depth=20, cv=.4, effect=c(1.25, 1.5, 1.75, 2),
+             alpha= .05, power=c(.7,.8, .9))
+```
+
+```{r}
+rnapower(depth=200, cv=.4, effect=c(1.25, 1.5, 1.75, 2),
+             alpha= .05, power=c(.7,.8, .9))
+```
+
+We see a table of values. 
